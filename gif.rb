@@ -116,18 +116,23 @@ class GIF
     end
 
     def color_index(x, y)
-      @data.getbyte(data_index(x, y))
+      @data.getbyte(interlace(y) * @width + x)
     end
 
     def set_color_index(x, y, index)
-      @data.setbyte(data_index(x, y), index)
+      @data.setbyte(interlace(y) * @width + x, index)
     end
 
-    def data_index(x, y)
-      if @interlaced
-        #TODO
+    def interlace(y)
+      return y unless @interlaced
+      i = y / @height
+      y %= @height
+      for step, start in [[8, 0], [8, 4], [4, 2], [2, 1]]
+        size = (@height - start + step - 1) / step
+        return i * @height + step * y + start if y < size
+        y -= size
       end
-      y * @width + x
+      nil
     end
   end
 
@@ -234,16 +239,15 @@ class GIF
 
     def read_app_extension(gif)
       app_label = read_block(11)
+      blocks = read_remaining_blocks
       case app_label
       when 'NETSCAPE2.0'
-        for block in read_remaining_blocks
+        for block in blocks
           case block.getbyte(0)
           when 0x01
             gif.loop_count = block[1, 2].unpack('v')[0]
           end
         end
-      else
-        read_remaining_blocks
       end
     end
 
@@ -579,7 +583,7 @@ class GIF
         end
         @dict[@next_code - 1] = new_seq
       end
-      # Every time a code is outputted a dictionary entry is added and the next code is incremented.
+      # On compression, every time a code is outputted a dictionary entry is added and the next code is incremented.
       # Do all that here as well, except we can't add the dictionary entry yet, until we know the next character.
       # Instead record the sequence so that we can add it at the start of the next iteration.
       @prev_seq = nil
