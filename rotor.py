@@ -51,7 +51,7 @@ class Vector3D:
             # We can write as 0 times any unit vector.
             # We can't know what the correct unit vector is so we'll just pick one.
             # This vector will be used for the return value of log(-1) and sqrt(-1).
-            return Vector(1, 0, 0)
+            return Vector3D(0, 0, 1)
         else:
             return self / r
 
@@ -76,9 +76,11 @@ class Vector3D:
         else:
             return NotImplemented
 
-    # Multiplying two vectors constructs a rotor from the plane formed by the vectors.
     def __mul__(a, b):
         if isinstance(b, Vector3D):
+            # u v = (u1 i + u2 j + u3 k) (v1 i + v2 j + v3 k)
+            #     = (u1 v1 + u2 v2 + u3 v3) + (u1 v2-u2 v1) i j - (u1 v3-u3 v1) k i + (u2 v3-u3 v2) j k
+            #     = u.v + uxv i j k
             return Rotor3D(a.dot(b), a.cross(b))
         elif is_scalar(b):
             return Vector3D(a.x * b, a.y * b, a.z * b)
@@ -129,7 +131,7 @@ class Vector3D:
         return '%s(%r, %r, %r)' % (self.__class__.__name__, self.x, self.y, self.z)
 
 class Rotor3D:
-    def __init__(self, sym, skew):
+    def __init__(self, sym, skew = Vector3D(0, 0, 0)):
         '''
         Construct a rotor that represents the geometric product of two vectors.
 
@@ -147,7 +149,7 @@ class Rotor3D:
         r e^(n i j k) = r (cos|n| + sin|n| n/|n| i j k)
 
         - r is the radius of the rotor, the scaling component.
-        - n/|n| is a unit vector normal to the plain of rotation.
+        - n is a vector normal to the plain of rotation.
         - |n|, the magnitude of the vector gives the angle to rotate through.
 
         If n is a unit vector then: (n i j k)^2 = -1.
@@ -156,28 +158,28 @@ class Rotor3D:
         self.sym = float(sym)
         self.skew = skew
 
-    # Rotor3D.x_angle(A/2).matrix() == [[1,      0,      0 ],
-    #                                   [0,  cos(A), sin(A)],
-    #                                   [0, -sin(A), cos(A)]]
+    # Rotor3D.pitch(A).matrix() == [[1,        0,       0],
+    #                               [0,  cos(2A), sin(2A)],
+    #                               [0, -sin(2A), cos(2A)]]
     @classmethod
-    def x_angle(cls, angle):
-        '''Construct a rotor that rotates a vector around the x axis (yz plane).'''
+    def pitch(cls, angle):
+        '''Construct a rotor that rotates a vector around the x (left-right) axis (yz plane).'''
         return cls(math.cos(angle), Vector3D(math.sin(angle), 0, 0))
 
-    # Rotor3D.y_angle(B/2).matrix() == [[cos(A), 0, -sin(A)],
-    #                                   [    0, 1,       0 ],
-    #                                   [sin(A), 0,  cos(A)]]
+    # Rotor3D.yaw(B).matrix() == [[cos(2B), 0, -sin(2B)],
+    #                             [      0, 1,        0],
+    #                             [sin(2B), 0,  cos(2B)]]
     @classmethod
-    def y_angle(cls, angle):
-        '''Construct a rotor that rotates a vector around the y axis (zx plane).'''
+    def yaw(cls, angle):
+        '''Construct a rotor that rotates a vector around the y (up-down) axis (zx plane).'''
         return cls(math.cos(angle), Vector3D(0, math.sin(angle), 0))
 
-    # Rotor3D.z_angle(C/2).matrix() == [[ cos(C), sin(A), 0],
-    #                                   [-sin(C), cos(A), 0],
-    #                                   [     0,      0,  1]]
+    # Rotor3D.roll(C).matrix() == [[ cos(2C), sin(2C), 0],
+    #                              [-sin(2C), cos(2C), 0],
+    #                              [       0,       0, 1]]
     @classmethod
-    def z_angle(cls, angle):
-        '''Construct a rotor that rotates a vector around the z axis (xy plane).'''
+    def roll(cls, angle):
+        '''Construct a rotor that rotates a vector around the z (forward-back) axis (xy plane).'''
         return cls(math.cos(angle), Vector3D(0, 0, math.sin(angle)))
 
     @classmethod
@@ -199,7 +201,7 @@ class Rotor3D:
 
     @classmethod
     def euler(cls, A, B, C):
-        return cls.z_angle(C) * cls.y_angle(B) * cls.x_angle(A)
+        return cls.roll(C) * cls.yaw(B) * cls.pitch(A)
 
     def __abs__(self):
         return math.sqrt(self.abs_squared())
@@ -255,39 +257,31 @@ class Rotor3D:
 
     def apply(self, v):
         #
-        # Vector x Vector:
-        # u v = u.v + uxv i j k
-        #
-        # Bivector x Bivector:
-        # (u i j k) (v i j k) = (u v) (i j k)^2 = -u v
-        #
-        # Vector x Bivector:
-        # (u i j k) v = u (v i j k) = (u v) i j k
-        #                           = (u.v + uxv i j k) i j k
-        #                           = u.v i j k - uxv
-        #
         # Rotation formula:
         #
         # r v ¬r = (a+n i j k) v (a-n i j k)
-        #        = (a+n i j k) (a v - v.n i j k + vxn)
-        #        = a^2 v - 2 a nxv + n v.n - nx(vxn)
-        #        = (a^2-n.n) v + 2 (n.v n - a nxv)
+        #        = a^2 v - a (v n-n v) i j k + n v n
+        #        = a^2 v - a (2 nxv) + (2 n.v n - n.n v)
+        #        = (a^2-n.n) v + 2 n.v n - 2 a nxv
         #
-        # Compose with multiplication:
+        # Normal vector is unchanged (except for scaling):
+        #
+        # r n ¬r = |r|^2 n
+        #
+        # Composes with multiplication:
         #
         # (r1*r2).apply(v) = (r1 r2) v ¬(r1 r2)
         #                  = r1 (r2 v ¬r2) ¬r1
         #                  = r1.apply(r2.apply(v))
         #
-        return (self.sym*self.sym - self.skew.dot(self.skew))*v + 2*(self.skew.dot(v)*self.skew - self.sym*self.skew.cross(v))
+        return (self.sym*self.sym - self.skew.dot(self.skew))*v + 2*self.skew.dot(v)*self.skew - 2*self.sym*self.skew.cross(v)
 
     def matrix(self):
         '''
         Returns the matrix that corresponds to applying this rotor to a vector (when right multiplied).
         '''
         #
-        # r v ¬r = (a^2-|n|^2) v - 2 a nxv + 2 n.v n
-        #        = ((a^2-|n|^2) I + 2 n(x)n - 2 a [n]x) v
+        # r v ¬r = (a^2-n.n) v + 2 n.v n - 2 a nxv
         #        = ((a^2-b^2-c^2-d^2) [1 0 0] + 2 [bb bc bd] - 2 a [ 0 -d  c]) v
         #                             [0 1 0]     [cb cc cd]       [ d  0 -b]
         #                             [0 0 1]     [db dc dd]       [-c  b  0]
@@ -462,3 +456,83 @@ class Rotor3D:
 
     def __repr__(self):
         return '%s(%r, %r)' % (self.__class__.__name__, self.sym, self.skew)
+
+#-------------------------------------------------------------------------------
+
+def rotation_matrix(a, b, angle):
+    '''
+    Construct a rotation matrix that rotates by angle in the plane ab.
+    '''
+    # Form basis matrix Mab with a and b in place of the x and y axes.
+    M = list(zip(a, b, *normals(a, b)))
+    # Then to rotate in the plane ab do a change of basis to M, rotate about xy, then change back.
+    # Rab(t) = Mab Rxy(t) Mab^-1
+    R = identity_matrix(len(M))
+    R[0][0] = math.cos(angle)
+    R[0][1] = math.sin(angle)
+    R[1][0] = -R[0][1]
+    R[1][1] =  R[0][0]
+    return dot(dot(M, zip(*R)), zip(*inverse_matrix(M)))
+
+def dot(rows, cols):
+    return [[sum(x * y for x, y in zip(row, col)) for col in cols] for row in rows]
+
+def identity_matrix(n):
+    I = [[0] * n for i in range(n)]
+    for i in range(n):
+        I[i][i] = 1
+    return I
+
+def inverse_matrix(M):
+    N = list(map(list, M))
+    invert_matrix(N)
+    return N
+
+def invert_matrix(M):
+    if not all(len(x) == len(M) for x in M):
+        raise ValueError('matrix not square')
+    for n in range(len(M)):
+        if M[n][n] == 0:
+            for i in range(n + 1, len(M)):
+                if M[i][n] != 0:
+                    M[n], M[i] = M[i], M[n]
+                    break
+            else:
+                raise ZeroDivisionError('singular matrix')
+        if M[n][n] != 1:
+            x = 1 / M[n][n]
+            M[n][n] = 1
+            for j in range(len(M)):
+                M[n][j] *= x
+        for i in range(len(M)):
+            if i != n and M[i][n] != 0:
+                x = M[i][n]
+                M[i][n] = 0
+                for j in range(len(M)):
+                    M[i][j] -= x * M[n][j]
+
+def normals(a, b):
+    '''
+    Given two n dimensional vectors, find n-2 normal vectors.
+    In 3 dimensions this is equivalent to the cross product.
+    '''
+    # The vector pair a, b form a hyperplane in n dimensions.
+    # For another vector x on the hyperplane:
+    # a.x = 0
+    # b.x = 0
+    # This is a linear system of equations that can be solved for x.
+    # All vectors in the resulting vector space will be normal to a and b.
+    #
+    # x0 =  sum(k=2->n-1, (a1 bk-ak b1) tk)
+    # x1 = -sum(k=2->n-1, (a0 bk-ak b0) tk)
+    # xk = (a0 b1-a1 b0) tk, k=2->n-1
+    #
+    n = min(len(a), len(b))
+    xs = []
+    for i in range(2, n):
+        x = [0] * n
+        x[0] =  (a[1]*b[i] - a[i]*b[1])
+        x[1] = -(a[0]*b[i] - a[i]*b[0])
+        x[i] =  (a[0]*b[1] - a[1]*b[0])
+        xs.append(x)
+    return xs

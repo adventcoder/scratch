@@ -7,41 +7,49 @@ module Enumerable
 end
 
 class Array
+  def flat?
+    none? { |x| Array === x }
+  end
+
   def dot(other)
-    unless other.size == size
-      raise ArgumentError, "wrong number of elements: (#{other.size} for #{size})"
+    if flat?
+      if other.flat?
+        vector_dot_vector(other)
+      else
+        vector_dot_matrix(other)
+      end
+    else
+      if other.flat?
+        map { |row| row.vector_dot_vector(other) }
+      else
+        map { |row| row.vector_dot_matrix(other) }
+      end
     end
-    (0 ... size).inject(0) { |sum, i| sum + self[i] * other[i] }
   end
 
-  def cross(other)
-    map { |a| other.map { |b| yield a, b } }
+  def vector_dot_matrix(other)
+    other.map { |col| vector_dot_vector(col) }
   end
 
-  def mmul(other)
-    cross(other.transpose, &:dot)
+  def vector_dot_vector(other)
+    zip(other).inject(0) { |sum, (x, y)| sum + x*y }
   end
 
-  def minv!
-    raise ArgumentError, 'not square matrix' unless all? { |row| row.size == size }
-    inv = Array.new(size) { Array.new(size, 0) }
-    for n in 0 ... size
-      inv[n][n] = 1
+  def invert!
+    unless all? { |row| row.size == size }
+      raise ArgumentError, 'not square matrix'
     end
     for n in 0 ... size
       if self[n][n] == 0
         i = (n + 1 ... size).find { |i2| self[i2][n] != 0 }
-        raise ArgumentError, 'singular matrix' if i.nil?
+        raise ZeroDivisionError, 'singular matrix' if i.nil?
         self[n], self[i] = self[i], self[n]
       end
       unless self[n][n] == 1
         m = self[n][n]
         self[n][n] = 1
-        for j in n + 1 ... size
-          self[n][j] = self[n][j].quo(m)
-        end
         for j in 0 ... size
-          inv[n][j] = inv[n][j].quo(m)
+          self[n][j] = self[n][j].quo(m)
         end
       end
       for i in 0 ... size
@@ -49,16 +57,13 @@ class Array
         unless self[i][n] == 0
           m = self[i][n]
           self[i][n] = 0
-          for j in n + 1 ... size
-            self[i][j] -= self[n][j] * m
-          end
           for j in 0 ... size
-            inv[i][j] -= inv[n][j] * m
+            self[i][j] -= self[n][j] * m
           end
         end
       end
     end
-    inv
+    self
   end
 end
 
@@ -67,7 +72,8 @@ def fit(xcols, ycol)
   ybar = ycol.mean
   xvars = xcols.zip(xbars).map { |(xcol, xbar)| xcol.map { |x| x - xbar } }
   yvar = ycol.map { |y| y - ybar }
-  weights = [yvar].mmul(xvars.transpose).mmul(xvars.mmul(xvars.transpose).minv!)[0]
+  # w = (y X^T) (X X^T)^-1
+  weights = yvar.dot(xvars).dot(xvars.dot(xvars).invert!)
   offset = ybar - weights.dot(xbars)
   lambda { |xs| offset + weights.dot(xs) }
 end
