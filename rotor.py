@@ -44,16 +44,19 @@ class Vector3D:
 
     def unit(self):
         '''
-        Satisfies: self = abs(self) * self.unit()
+        Satisfies: self == abs(self) * self.unit()
         '''
         r = abs(self)
         if r == 0:
             # We can write as 0 times any unit vector.
-            # We can't know what the correct unit vector is so we'll just pick one.
+            # We can't know what the correct unit vector is so just pick one.
             # This vector will be used for the return value of log(-1) and sqrt(-1).
             return Vector3D(0, 0, 1)
         else:
             return self / r
+
+    def rotate(self, axis, angle):
+        return math.cos(angle) * self + math.sin(angle) * axis.cross(self) + (1 - math.cos(angle)) * axis.dot(self) * axis.unit()
 
     def reciprocal(self):
         return self / self.dot(self)
@@ -151,57 +154,66 @@ class Rotor3D:
         - r is the radius of the rotor, the scaling component.
         - n is a vector normal to the plain of rotation.
         - |n|, the magnitude of the vector gives the angle to rotate through.
-
-        If n is a unit vector then: (n i j k)^2 = -1.
-        This means that there are infinitely many square roots of -1, all the unit vectors.
         '''
         self.sym = float(sym)
         self.skew = skew
 
-    # Rotor3D.pitch(A).matrix() == [[1,        0,       0],
-    #                               [0,  cos(2A), sin(2A)],
-    #                               [0, -sin(2A), cos(2A)]]
+    # Rotor3D.pitch(A).matrix() == [[1,       0,       0],
+    #                               [0,  cos(A), -sin(A)],
+    #                               [0,  sin(A),  cos(A)]]
     @classmethod
     def pitch(cls, angle):
-        '''Construct a rotor that rotates a vector around the x (left-right) axis (yz plane).'''
+        '''
+        Take the x, y, z axes as pointing right, forward, up respectively (right handed).
+        This method then returns a rotor that rotates a vector upwards around the x axis.
+        '''
         return cls(math.cos(angle), Vector3D(math.sin(angle), 0, 0))
 
-    # Rotor3D.yaw(B).matrix() == [[cos(2B), 0, -sin(2B)],
-    #                             [      0, 1,        0],
-    #                             [sin(2B), 0,  cos(2B)]]
-    @classmethod
-    def yaw(cls, angle):
-        '''Construct a rotor that rotates a vector around the y (up-down) axis (zx plane).'''
-        return cls(math.cos(angle), Vector3D(0, math.sin(angle), 0))
-
-    # Rotor3D.roll(C).matrix() == [[ cos(2C), sin(2C), 0],
-    #                              [-sin(2C), cos(2C), 0],
-    #                              [       0,       0, 1]]
+    # Rotor3D.roll(B).matrix() == [[ cos(B), 0, sin(B)],
+    #                              [      0, 1,      0],
+    #                              [-sin(B), 0, cos(B)]]
     @classmethod
     def roll(cls, angle):
-        '''Construct a rotor that rotates a vector around the z (forward-back) axis (xy plane).'''
+        '''
+        Take the x, y, z axes as pointing right, forward, up respectively (right handed).
+        This method then returns a rotor that rotates a vector right around the y axis.
+        '''
+        return cls(math.cos(angle), Vector3D(0, math.sin(angle), 0))
+
+    # Rotor3D.yaw(C).matrix() == [[cos(C), -sin(C), 0],
+    #                             [sin(C),  cos(C), 0],
+    #                             [     0,       0, 1]]
+    @classmethod
+    def yaw(cls, angle):
+        '''
+        Take the x, y, z axes as pointing right, forward, up respectively (right handed).
+        This method then returns a rotor that rotates a vector to the left around the z axis.
+        '''
         return cls(math.cos(angle), Vector3D(0, 0, math.sin(angle)))
 
     @classmethod
     def axis_angle(cls, axis, angle):
         '''
         Construct a rotor that rotates a vector around a general axis of rotation.
-        If the axis is not a unit vector then the vector is also scaled by the length of the axis.
+        The direction of the rotation will be according to the left/right hand rule depending on the coordinate system.
+        If the axis is not a unit vector then the vector to be rotated is also scaled by the length of the axis.
+        Satisfies: self = Rotor3D.axis_angle(abs(self) * self.axis(), self.angle())
         '''
         return cls(math.cos(angle) * abs(axis), math.sin(angle) * axis)
 
     @classmethod
     def polar(cls, radius, normal):
         '''
-        Construct a rotor that rotates a vector in the plane perpendicular to the given normal vector and that scales by the given radius.
+        Construct a rotor that rotates a vector around the given normal vector and that scales by the given radius.
         The angle of rotation corresponds to the magnitude of the normal vector.
+        Satisfies: self = Rotor3D.polar(abs(self), self.arg())
         '''
         angle = abs(normal)
         return cls(radius * math.cos(angle), radius * sin(angle) * normal.unit())
 
     @classmethod
     def euler(cls, A, B, C):
-        return cls.roll(C) * cls.yaw(B) * cls.pitch(A)
+        return cls.pitch(A) * cls.roll(B) * cls.yaw(C)
 
     def __abs__(self):
         return math.sqrt(self.abs_squared())
@@ -210,21 +222,35 @@ class Rotor3D:
         return self.sym*self.sym + self.skew.dot(self.skew)
 
     def arg(self):
+        return self.angle() * self.axis()
+
+    def axis(self):
         '''
-        Returns the argument of this rotor, such that: self == Rotor3D.polar(abs(self), self.arg())
-        The argument is a vector that is normal to the plane of rotation of this rotor.
-        The magnitude of the vector gives the angle, between 0-pi.
+        Returns the axis of rotation as a unit vector.
+        An arbitrary unit vector is returned when the angle is 0 or pi.
         '''
-        # q = a + v i j k
+        return self.skew.unit()
+
+    def angle(self):
+        '''Returns the angle of rotation (between 0-pi)'''
+        return math.atan2(abs(self.skew), self.sym)
+
+    def exp(self):
         #
-        #           n = atan(|v|/|a|) v/|v|
-        # e^(n i j k) = (|a| + v i j k)/|q|
+        # e^(v i j k) = sum(n=0->inf, (v i j k)^n/n!)
+        #             = sum(n=0->inf, (v i j k)^(2 n)/(2 n)!) + sum(n=0->inf, (v i j k)^(2 n+1)/(2 n+1)!)
+        #             = sum(n=0->inf, (-|v|^2)^n/(2 n)!) + sum(n=0->inf, (-|v|^2)^n/(2 n+1)!) v i j k
+        #             = sum(n=0->inf, (-1)^n |v|^(2 n)/(2 n)!) + sum(n=0->inf, (-1)^n |v|^(2 n+1)/(2 n+1)!) v/|v| i j k
+        #             = cos|v| + sin|v| v/|v| i j k
         #
-        #           n = (pi - atan(|v|/|a|)) v/|v|
-        # e^(n i j k) = (-|a| + v i j k)/|q|
-        #
-        angle = math.atan2(abs(self.skew), self.sym)
-        return angle * self.skew.unit()
+        return Rotor3D.polar(math.exp(self.sym), self.skew)
+
+    def log(self):
+        return Rotor3D(math.log(self.abs_squared()) / 2, self.arg())
+
+    def squared(self):
+        a, n = self.sym, self.skew
+        return Rotor3D(a*a - n.dot(n), 2 * a * n)
 
     def sqrt(self):
         #
@@ -246,55 +272,85 @@ class Rotor3D:
         #    = v/(2 sqrt((|q| + a)/2))
         #    = sqrt((|q| - a)/2) v/|v|
         #
-        # sqrt((|q| + a)/2) sqrt((|q| - a)/2) = |v|/2
-        #                    a' = (|v|/2)/sqrt((|q| - a)/2)
-        #
         # sqrt(q) = sqrt((|q|+a)/2) + sqrt((|q|-a)/2) v/|v| i j k
         #
         a = (abs(self) + self.sym) / 2
         # Don't want to deal with edge cases so just do the two square roots.
         return Rotor3D(math.sqrt(a), math.sqrt(a - self.sym) * self.skew.unit())
 
-    def apply(self, v):
+    def apply_squared(self, v):
         #
         # Rotation formula:
         #
-        # r v ¬r = (a+n i j k) v (a-n i j k)
-        #        = a^2 v - a (v n-n v) i j k + n v n
-        #        = a^2 v - a (2 nxv) + (2 n.v n - n.n v)
-        #        = (a^2-n.n) v + 2 n.v n - 2 a nxv
+        # ¬r v r = (a-n i j k) v (a+n i j k)
+        #        = a^2 v + a (v n-n v) i j k + n v n
+        #        = (a^2 - n.n) v + 2 a nxv + 2 n n.v
         #
         # Normal vector is unchanged (except for scaling):
         #
-        # r n ¬r = |r|^2 n
+        # ¬r n r = |r|^2 n
         #
         # Composes with multiplication:
         #
-        # (r1*r2).apply(v) = (r1 r2) v ¬(r1 r2)
-        #                  = r1 (r2 v ¬r2) ¬r1
-        #                  = r1.apply(r2.apply(v))
+        # (r1*r2).apply_squared(v) = ¬(r1 r2) v (r1 r2)
+        #                          = ¬r2 (¬r1 v r1) r2
+        #                          = r2.apply_squared(r1.apply_squared(v))
         #
-        return (self.sym*self.sym - self.skew.dot(self.skew))*v + 2*self.skew.dot(v)*self.skew - 2*self.sym*self.skew.cross(v)
+        if isinstance(v, Vector3D):
+            a, n = self.sym, self.skew
+            return (a*a-n.dot(n))*v + 2*a*n.cross(v) + 2*n.dot(v)*n
+        elif isinstance(v, Rotor3D):
+            # ¬r (a+n i j k) r = (|r|^2 a) + (¬r n r) i j k
+            return Rotor3D(v.sym * self.abs_squared(), self.apply_squared(v.skew))
+        elif is_scalar(v):
+            return v * self.abs_squared()
+        else:
+            return NotImplemented
 
-    def matrix(self):
-        '''
-        Returns the matrix that corresponds to applying this rotor to a vector (when right multiplied).
-        '''
+    def matrix_squared(self):
         #
-        # r v ¬r = (a^2-n.n) v + 2 n.v n - 2 a nxv
-        #        = ((a^2-b^2-c^2-d^2) [1 0 0] + 2 [bb bc bd] - 2 a [ 0 -d  c]) v
-        #                             [0 1 0]     [cb cc cd]       [ d  0 -b]
-        #                             [0 0 1]     [db dc dd]       [-c  b  0]
-        #        = [a^2+b^2-c^2-d^2      2bc+2ad          2bd-2ac    ] v
-        #          [    2cb-2ad      a^2-b^2+c^2-d^2      2cd+2ab    ]
-        #          [    2db+2ac          2dc-2ab      a^2-b^2-c^2+d^2]
+        # r v ¬r = (a^2-n.n) v + 2 a nxv + 2 n.v n
+        #        = ((a^2-b^2-c^2-d^2) [1 0 0] + 2 a [ 0 -d  c] + 2 [bb bc bd]) v
+        #                             [0 1 0]       [ d  0 -b]     [cb cc cd]
+        #                             [0 0 1]       [-c  b  0]     [db dc dd]
+        #        = [a^2+b^2-c^2-d^2     -2ad+2bc          2ac+2bd    ] v
+        #          [    2ad+2cb      a^2-b^2+c^2-d^2     -2ab+2cd    ]
+        #          [   -2ac+2db          2ab+2dc      a^2-b^2-c^2+d^2]
         #
         a, b, c, d = self.sym, self.skew.x, self.skew.y, self.skew.z
-        r = a*a - b*b - c*c - d*d
+        a2 = a*a - b*b - c*c - d*d
         return [
-            [  r + 2*b*b, 2*(b*c+a*d), 2*(b*d-a*c)],
-            [2*(c*b-a*d),   r + 2*c*c, 2*(c*d+a*b)],
-            [2*(d*b+a*c), 2*(d*c-a*b),   r + 2*d*d]
+            [  a2 + 2*b*b, 2*(-a*d+b*c), 2*( a*c+b*d)],
+            [2*( a*d+c*b),   a2 + 2*c*c, 2*(-a*b+c*d)],
+            [2*(-a*c+d*b), 2*( a*b+d*c),   a2 + 2*d*d]
+        ]
+
+    def apply(self, v):
+        #
+        # ¬sqrt(r) v sqrt(r) = a v + nxv + (|r|-a) (n/|n|).v (n/|n|)
+        #
+        # Doesn't compose nicely since in general: sqrt(r1 r2) != sqrt(r1) sqrt(r2).
+        #
+        if isinstance(v, Vector3D):
+            a, n = self.sym, self.skew
+            m = math.sqrt(a*a + n.dot(n)) - a
+            u = n.unit()
+            return a*v + n.cross(v) + m * u.dot(v) * u
+        elif isinstance(v, Rotor3D):
+            return Rotor3D(abs(self), self.apply(v.skew))
+        elif isscalar():
+            return v * abs(self)
+        else:
+            return NotImplemented
+
+    def matrix(self):
+        a, n = self.sym, self.skew
+        m = math.sqrt(a*a + n.dot(n)) - a
+        u = n.unit()
+        return [
+            [   a + m*u.x*u.x, -n.z + m*u.x*u.y,  n.y + m*u.x*u.z],
+            [ n.z + m*u.y*u.x,    a + m*u.y*u.y, -n.x + m*u.y*u.z],
+            [-n.y + m*u.z*u.x,  n.x + m*u.z*u.y,    a + m*u.z*u.z]
         ]
 
     def euler_angles(self):
@@ -305,45 +361,29 @@ class Rotor3D:
         - B: rotation around the y axis, -pi/2<=B<=pi/2
         - C: rotation around the z axis, -pi<=C<=pi
         '''
-        #
         # q = a + b j k + c k i + d i j
-        # q = |q| (cos(C/2)+sin(C/2) i j)(cos(B/2)+sin(B/2) k i)(cos(A/2)+sin(A/2) j k)
+        # q = |q| (cos(A)+sin(A) j k)(cos(B)+sin(B) k i)(cos(C)+sin(C) i j)
         #
-        # matrix(q) = |q|^2 matrix(cos(C/2)+sin(C/2) i j) matrix(cos(B/2)+sin(B/2) k i) matrix(cos(A/2)+sin(A/2) j k)
+        # matrix(q)^2 = |q|^2 matrix(cos(C)+sin(C) i j)^2 matrix(cos(B)+sin(B) k i)^2 matrix(cos(A)+sin(A) j k)^2
         #
-        # [a^2+b^2-c^2-d^2      2bc+2ad          2bd-2ac    ] = |q|^2 [ cos(B)cos(C)        ...            ...     ]
-        # [    2cb-2ad      a^2-b^2+c^2-d^2      2cd+2ab    ]         [-cos(B)sin(C)        ...            ...     ]
-        # [    2db+2ac          2dc-2ab      a^2-b^2-c^2+d^2]         [ sin(B)         -sin(A)cos(B)   cos(A)cos(B)]
+        # [...] = |q|^2 [cos(2C) -sin(2C) 0] [ cos(2B) 0 sin(2B)] [1    0        0   ] = |q|^2 [ cos(2B)cos(2C)         ...             ...      ]
+        # [...]         [sin(2C)  cos(2C) 0] [    0    1    0   ] [0 cos(2A) -sin(2A)]         [ cos(2B)sin(2C)         ...             ...      ]
+        # [...]         [   0        0    1] [-sin(2B) 0 cos(2B)] [0 sin(2A)  cos(2A)]         [-sin(2B)          cos(2B)sin(2A)   cos(2B)cos(2A)]
         #
-        # By = 2(ac+db)/|q|^2 = sin(B)
-        #
-        # Ax = (a^2-b^2-c^2+d^2)/|q|^2 = cos(B) cos(A)
-        # Ay = 2(ab-dc)/|q|^2          = cos(B) sin(A)
-        #
-        # Cx = (a^2+b^2-c^2-d^2)/|q|^2 = cos(B) cos(C)
-        # Cy = 2(ad-cb)/|q|^2          = cos(B) sin(C)
+        # a^2 + b^2 - c^2 - d^2 = |q|^2 cos(2B)cos(2C)
+        #          2(a d + c b) = |q|^2 cos(2B)sin(2C)
+        #          2(a c - b d) = |q|^2 sin(2B)
+        #          2(a b + c d) = |q|^2 cos(2B)sin(2A)
+        # a^2 - b^2 - c^2 + d^2 = |q|^2 cos(2B)cos(2A)
         #
         a, b, c, d = self.sym, self.skew.x, self.skew.y, self.skew.z
         r2 = a*a + b*b + c*c + d*d
-        Ax = 1 - 2*(b*b+c*c)/r2
-        Cx = 1 - 2*(c*c+d*d)/r2
-        Ay = 2*(a*b-d*c)/r2
-        By = 2*(a*c+d*b)/r2
-        Cy = 2*(a*d-c*b)/r2
-        return math.atan2(Ay, Ax), math.asin(By), math.atan2(Cy, Cx)
-
-    def exp(self):
-        #
-        # e^(v i j k) = sum[n=0->inf, (v i j k)^n/n!)
-        #             = sum(n=0->inf, (v i j k)^(2 n)/(2 n)!) + sum(n=0->inf, (v i j k)^(2 n+1)/(2 n+1)!)
-        #             = sum(n=0->inf, (-|v|^2)^n/(2 n)!) + sum(n=0->inf, (-|v|^2)^n/(2 n+1)!) v i j k
-        #             = sum(n=0->inf, (-1)^n |v|^(2 n)/(2 n)!) + sum(n=0->inf, (-1)^n |v|^(2 n+1)/(2 n+1)!) v/|v| i j k
-        #             = cos|v| + sin|v| v/|v| i j k
-        #
-        return Rotor3D.polar(math.exp(self.sym), self.skew)
-
-    def log(self):
-        return Rotor3D(math.log(self.abs_squared()) / 2, self.arg())
+        Cx = r2 - 2*(c*c + d*d)
+        Cy = 2*(a*d + c*b)
+        By = 2*(a*c - b*d)
+        Ay = 2*(a*b + c*d)
+        Ax = r2 - 2*(c*c + b*b)
+        return math.atan2(Ay, Ax), math.asin(By / r2), math.atan2(Cy, Cx)
 
     def conjugate(self):
         return Rotor3D(self.sym, -self.skew)
@@ -364,27 +404,27 @@ class Rotor3D:
 
     def __radd__(a, b):
         if is_scalar(b):
-            return a + b
+            return Rotor3D(b + a.sym, a.skew)
         else:
             return NotImplemented
 
     def __sub__(a, b):
         if isinstance(b, Rotor3D):
-            return Rotor3D(a.sym + b.sym, a.skew + b.skew)
+            return Rotor3D(a.sym - b.sym, a.skew - b.skew)
         elif is_scalar(b):
-            return Rotor3D(a.sym + b, a.skew)
+            return Rotor3D(a.sym - b, a.skew)
         else:
             return NotImplemented
 
     def __rsub__(a, b):
         if is_scalar(b):
-            return -(a - b)
+            return Rotor3D(b - a.sym, -a.skew)
         else:
             return NotImplemented
 
     def __mul__(a, b):
         if isinstance(b, Rotor3D):
-            # (a1+v1 i j k) (a2+v2 i j k) = a1 a2 + a1 v2 i j k + a2 v1 i j k - v1.v2 - v1 v2 i j k
+            # (a1+v1 i j k) (a2+v2 i j k) = (a1 a2 - v1.v2) + (a1 v2 + v1 a2 - v1xv2) i j k
             sym = a.sym*b.sym - a.skew.dot(b.skew)
             skew = a.sym*b.skew + a.skew*b.sym - a.skew.cross(b.skew)
             return Rotor3D(sym, skew)
@@ -464,18 +504,25 @@ def rotation_matrix(a, b, angle):
     Construct a rotation matrix that rotates by angle in the plane ab.
     '''
     # Form basis matrix Mab with a and b in place of the x and y axes.
-    M = list(zip(a, b, *normals(a, b)))
+    M = list(zip(normalise(a), normalise(b), *map(normalise, normals(a, b))))
     # Then to rotate in the plane ab do a change of basis to M, rotate about xy, then change back.
     # Rab(t) = Mab Rxy(t) Mab^-1
     R = identity_matrix(len(M))
-    R[0][0] = math.cos(angle)
-    R[0][1] = math.sin(angle)
+    R[0][0] =  math.cos(angle)
+    R[0][1] = -math.sin(angle)
     R[1][0] = -R[0][1]
     R[1][1] =  R[0][0]
-    return dot(dot(M, zip(*R)), zip(*inverse_matrix(M)))
+    return matrix_mulitply(M, matrix_mulitply(R, inverse_matrix(M)))
 
-def dot(rows, cols):
-    return [[sum(x * y for x, y in zip(row, col)) for col in cols] for row in rows]
+def matrix_mulitply(A, B):
+    return [[dot(a, b) for b in zip(*B)] for a in A]
+
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+def normalise(xs):
+    n = math.sqrt(dot(xs, xs))
+    return list(x / n for x in xs)
 
 def identity_matrix(n):
     I = [[0] * n for i in range(n)]
@@ -536,3 +583,17 @@ def normals(a, b):
         x[i] =  (a[0]*b[1] - a[1]*b[0])
         xs.append(x)
     return xs
+
+if __name__ == '__main__':
+
+    a = [1, 2, 3]
+    b = [1, -1, 1]
+
+    axis = Vector3D(*a).cross(Vector3D(*b)).unit()
+    angle = math.pi / 3
+
+    for row in rotation_matrix(a, b, angle):
+        print(row)
+    print()
+    for row in Rotor3D.axis_angle(axis, angle / 2).matrix_squared():
+        print(row)
