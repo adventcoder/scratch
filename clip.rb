@@ -57,7 +57,7 @@ module Clipboard
   end
 
   def self.paste(str)
-    set_data(User32::CF_UNICODE, format_unicode(str))
+    return set_data(User32::CF_UNICODE, format_unicode(str))
   end
 
   def self.format_unicode(str)
@@ -92,6 +92,7 @@ module Clipboard
   end
 
   def self.set_data(format, data)
+    return false if data.nil?
     hdata = create_global_data(data)
     unless hdata == 0
       unless User32::OpenClipboard(0) == 0
@@ -109,7 +110,7 @@ module Clipboard
   end
 
   def self.create_global_data(data)
-    raise ArgumentError, 'no data' if data.nil? or data.empty?
+    return 0 if data.empty?
     hdata = Kernel32::GlobalAlloc(Kernel32::GHND, data.bytesize)
     unless hdata == 0
       ptr = Kernel32::GlobalLock(hdata)
@@ -144,9 +145,18 @@ end
 if $0 == __FILE__
   case ARGV[0]
   when 'copy'
-    $stdout.write(Clipboard.copy)
+    str = Clipboard.copy
+    if str.nil?
+      $stderr.puts("Error copying from clipboard")
+      exit(false)
+    end
+    $stdout.write(str)
   when 'paste'
-    Clipboard.paste($stdin.read)
+    str = $stdin.read
+    unless Clipboard.paste(str)
+      $stderr.puts("Error pasting to clipboard")
+      exit(false)
+    end
   else
     $stderr.puts("Usage: ruby #{$0} [copy|paste]")
     exit(false)
