@@ -53,14 +53,14 @@ module Clipboard
   end
 
   def self.copy(encoding = Encoding.default_internal)
-    return parse_unicode(get_data(User32::CF_UNICODE), encoding)
+    return decode(get_data(User32::CF_UNICODE), encoding)
   end
 
   def self.paste(str)
-    return set_data(User32::CF_UNICODE, format_unicode(str))
+    return set_data(User32::CF_UNICODE, encode(str))
   end
 
-  def self.format_unicode(str)
+  def self.encode(str)
     return nil if str.nil?
     wchars = str.encode(Encoding::UTF_16LE).unpack('S<*')
     raise ArgumentError, 'invalid null terminator' if wchars.include?(0)
@@ -68,7 +68,7 @@ module Clipboard
     return wchars.pack('S*')
   end
 
-  def self.parse_unicode(data, encoding = Encoding.default_internal)
+  def self.decode(data, encoding = Encoding.default_internal)
     return nil if data.nil?
     wchars = data.unpack('S*')
     len = wchars.index(0)
@@ -104,7 +104,7 @@ module Clipboard
         end
         User32::CloseClipboard()
       end
-      destory_global_data(hdata)
+      destroy_global_data(hdata)
     end
     return false
   end
