@@ -35,9 +35,9 @@ def permute(items, n):
 
 def unpermute(perm):
     # cadb|
-    #  cad|b  0
-    #   ca|bd  01
-    #    c|abd  010
+    #  cad|b     0
+    #   ca|bd    01
+    #    c|abd   010
     #     |abcd  0102
     items = []
     digits = []
